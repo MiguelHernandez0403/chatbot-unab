@@ -1,0 +1,506 @@
+{
+  "name": "Embedding Documentos UNAB (Gemini + Supabase)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## ⚙️ CONFIGURACIÓN RÁPIDA (UNAB RAG)\n\n1. **Credenciales:** Al importar, selecciona tus credenciales en:\n   - **Google Drive** (`Listar Archivos de Carpeta Drive` y `Descargar Archivo Markdown`)\n   - **Postgres / Supabase** (`Preparar Tabla Vectorial`, `Borrar Fragmentos Antiguos` y `Postgres PGVector Store`)\n   - **Google Gemini (PaLM) Api** (`Embeddings Google Gemini`)\n2. **Carpeta Drive:** En `Listar Archivos de Carpeta Drive`, selecciona tu carpeta `Documentos_RAG_UNAB`.\n3. **Dimensiones:** Usa `models/gemini-embedding-001` (3072 dimensiones) alineado con `public.documentos_unab` (`vector(3072)`).",
+        "height": 300,
+        "width": 520,
+        "color": 5
+      },
+      "id": "5cace661-c0bb-4813-ab44-5bedd82017b4",
+      "name": "Notas de Configuración",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2368,
+        1040
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "5e27fe5d-6eac-4737-b08d-01423f771cdc",
+      "name": "Ejecutar Manualmente",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        2368,
+        1408
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 6
+            }
+          ]
+        }
+      },
+      "id": "b95f150c-370e-41ab-98dc-134968841eb3",
+      "name": "Programado (Semanal Lunes 6am)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        2368,
+        1584
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;\nCREATE EXTENSION IF NOT EXISTS pgcrypto;\n\nCREATE TABLE IF NOT EXISTS public.documentos_unab (\n  id bigserial PRIMARY KEY,\n  content text,\n  metadata jsonb,\n  embedding public.vector(3072)\n);\n\nDROP INDEX IF EXISTS documentos_unab_embedding_idx;\nALTER TABLE public.documentos_unab ALTER COLUMN embedding TYPE public.vector(3072);\n\nCREATE INDEX IF NOT EXISTS idx_documentos_unab_metadata\n  ON public.documentos_unab USING gin (metadata);",
+        "options": {}
+      },
+      "id": "22d69621-7b5e-4b2d-8fe9-95d54c6222cf",
+      "name": "Preparar Tabla Vectorial",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2608,
+        1488
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CiTrgIGcVdbiJ4Km",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "TRUNCATE TABLE public.documentos_unab RESTART IDENTITY;",
+        "options": {}
+      },
+      "id": "45a0368b-4a7d-4014-a074-93198d5a14cf",
+      "name": "Borrar Fragmentos Antiguos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2832,
+        1488
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CiTrgIGcVdbiJ4Km",
+          "name": "Postgres account"
+        }
+      },
+      "notes": "Limpia la tabla una sola vez al inicio antes de listar y descargar los archivos."
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "15Cma4ERh3B7Iceb0TleU4ZNmp44LkAAq",
+            "mode": "list",
+            "cachedResultName": "Documentos_RAG_UNAB",
+            "cachedResultUrl": "https://drive.google.com/drive/folders/15Cma4ERh3B7Iceb0TleU4ZNmp44LkAAq"
+          },
+          "whatToSearch": "files"
+        },
+        "options": {}
+      },
+      "id": "26245574-96a3-4a4c-9dc5-7e73dc147b34",
+      "name": "Listar Archivos de Carpeta Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3056,
+        1488
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "XeGlF5RFQbLtzwSK",
+          "name": "Google Drive UNAB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-solo-markdown",
+              "leftValue": "={{ $json.name }}",
+              "rightValue": ".md",
+              "operator": {
+                "type": "string",
+                "operation": "endsWith"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3f223bf9-2287-48ac-963e-37ed8183373f",
+      "name": "Filtrar Solo Markdown (.md)",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        3264,
+        1488
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "id": "2fe32184-0e44-49d3-bed1-63999af5fcb5",
+      "name": "Descargar Archivo Markdown",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3488,
+        1488
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "XeGlF5RFQbLtzwSK",
+          "name": "Google Drive UNAB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "text",
+        "options": {}
+      },
+      "id": "d16303bb-bb87-4276-aaed-cf5fef6084d8",
+      "name": "Extraer Texto Markdown",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        3712,
+        1488
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-no-vacio",
+              "leftValue": "={{ ($json.text || '').trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e23efc96-4426-4597-86a1-330b06835fec",
+      "name": "Descartar Vacíos",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        3936,
+        1488
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "4f5b4b4b-1029-4fb2-b12e-389224921baa",
+      "name": "Procesar 1 Archivo a la Vez",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        4144,
+        1488
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "public.documentos_unab",
+        "options": {
+          "columnNames": {
+            "values": {
+              "contentColumnName": "content"
+            }
+          }
+        }
+      },
+      "id": "029a6515-3490-4557-992e-524063318073",
+      "name": "Postgres PGVector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1,
+      "position": [
+        4416,
+        1488
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CiTrgIGcVdbiJ4Km",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "=={{ $json.text.replace(/\\n{3,}/g, '\\n\\n').trim() }}",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "fuente",
+                "value": "={{ $('Descargar Archivo Markdown').item.json.name }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "4e3ba1be-24e7-4f1d-8e90-23dfcbb04e7b",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [
+        4544,
+        1728
+      ]
+    },
+    {
+      "parameters": {
+        "chunkSize": 3000,
+        "chunkOverlap": 300,
+        "options": {}
+      },
+      "id": "d9458ff1-565c-4fec-9430-7a32a1653b1a",
+      "name": "Recursive Character Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        4624,
+        1920
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "424329bf-f2cb-426c-93d3-82ce3ba69285",
+      "name": "Embeddings Google Gemini",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        4288,
+        1728
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "kQagSREXMR0tYA0Y",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Ejecutar Manualmente": {
+      "main": [
+        [
+          {
+            "node": "Preparar Tabla Vectorial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Programado (Semanal Lunes 6am)": {
+      "main": [
+        [
+          {
+            "node": "Preparar Tabla Vectorial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Tabla Vectorial": {
+      "main": [
+        [
+          {
+            "node": "Borrar Fragmentos Antiguos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Borrar Fragmentos Antiguos": {
+      "main": [
+        [
+          {
+            "node": "Listar Archivos de Carpeta Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Listar Archivos de Carpeta Drive": {
+      "main": [
+        [
+          {
+            "node": "Filtrar Solo Markdown (.md)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar Solo Markdown (.md)": {
+      "main": [
+        [
+          {
+            "node": "Descargar Archivo Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar Archivo Markdown": {
+      "main": [
+        [
+          {
+            "node": "Extraer Texto Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer Texto Markdown": {
+      "main": [
+        [
+          {
+            "node": "Descartar Vacíos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descartar Vacíos": {
+      "main": [
+        [
+          {
+            "node": "Procesar 1 Archivo a la Vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar 1 Archivo a la Vez": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Postgres PGVector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres PGVector Store": {
+      "main": [
+        [
+          {
+            "node": "Procesar 1 Archivo a la Vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Postgres PGVector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings Google Gemini": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Postgres PGVector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "83950474-5097-4c67-895f-e059bbbce5b7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0977305cb476482f38b98f79d67bf258e63be93bbd3b6b171dc8e698924b6a26"
+  },
+  "nodeGroups": [],
+  "id": "oW9YLgnoXV0WNR2h",
+  "tags": []
+}

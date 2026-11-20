@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: unab_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: unab_academico
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U unab_admin -d unab_academico"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mcp-postgres:
+    image: node:20-alpine
+    restart: unless-stopped
+    command: >
+      npx -y supergateway
+      --stdio "npx -y @modelcontextprotocol/server-postgres postgresql://unab_admin:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/unab_academico"
+      --outputTransport streamableHttp
+      --port 8000
+      --streamableHttpPath /mcp
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tunnel-mcp:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://mcp-postgres:8000
+    depends_on:
+      - mcp-postgres
+
+  tunnel-postgres:
+    image: alpine:latest
+    restart: unless-stopped
+    command: sh -c "apk add --no-cache openssh-client && ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p 443 -R0:postgres:5432 tcp@free.pinggy.io"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pg_data:

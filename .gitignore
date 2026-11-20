@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+*.pem
+pgdata/
+.DS_Store
+node_modules/
+android-app/.expo/
+android-app/dist/
+android-app/web-build/
+android-app/*.tsbuildinfo
