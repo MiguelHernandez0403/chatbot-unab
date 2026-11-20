@@ -11,11 +11,16 @@ import {
   ActivityIndicator,
   ScrollView,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Markdown from 'react-native-markdown-display';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const WEBHOOK_URL = 'https://mahq729.app.n8n.cloud/webhook/unab-chat';
+const ID_BANNER_PATTERN = /^U00\d{5,8}$/;
+const ID_BANNER_KEY = 'id_banner';
+const SESSION_ID_KEY = 'session_id';
 
 interface Message {
   id: string;
@@ -31,11 +36,12 @@ const SUGERENCIAS = [
   'Plazo de inscripción en COSMOS',
 ];
 
-const generarSessionId = () =>
-  `unab_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+interface ChatScreenProps {
+  idBanner: string;
+  onLogout: () => void;
+}
 
-function ChatScreen() {
-  const [sessionId, setSessionId] = useState<string>(generarSessionId);
+function ChatScreen({ idBanner, onLogout }: ChatScreenProps) {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
@@ -56,11 +62,10 @@ function ChatScreen() {
 
   const reiniciarConversacion = () => {
     if (isLoading) return;
-    setSessionId(generarSessionId());
     setMessages([
       {
         id: `welcome_${Date.now()}`,
-        text: 'Nueva sesión iniciada. ¿En qué puedo ayudarte hoy sobre tu programa en la UNAB?',
+        text: 'Se limpió el historial visible. ¿En qué puedo ayudarte hoy sobre tu programa en la UNAB?',
         isUser: false,
       },
     ]);
@@ -95,7 +100,8 @@ function ChatScreen() {
           Accept: 'application/json',
         },
         body: JSON.stringify({
-          session_id: sessionId,
+          session_id: idBanner,
+          id_banner: idBanner,
           mensaje: texto,
         }),
         signal: controller.signal,
@@ -220,17 +226,28 @@ function ChatScreen() {
               <View style={styles.onlineDot} />
               <Text style={styles.headerSubtitle}>Ingeniería de Sistemas</Text>
             </View>
+            <Text style={styles.activeId}>ID: {idBanner}</Text>
           </View>
         </View>
-        <TouchableOpacity
-          onPress={reiniciarConversacion}
-          disabled={isLoading}
-          style={[styles.resetButton, isLoading && styles.resetButtonDisabled]}
-          accessibilityRole="button"
-          accessibilityLabel="Iniciar un nuevo chat"
-        >
-          <Text style={styles.resetButtonText}>Nuevo chat</Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={reiniciarConversacion}
+            disabled={isLoading}
+            style={[styles.resetButton, isLoading && styles.resetButtonDisabled]}
+            accessibilityRole="button"
+            accessibilityLabel="Iniciar un nuevo chat"
+          >
+            <Text style={styles.resetButtonText}>Nuevo chat</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={onLogout}
+            style={styles.logoutButton}
+            accessibilityRole="button"
+            accessibilityLabel="Cerrar sesión"
+          >
+            <Text style={styles.logoutButtonText}>Cerrar sesión</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <KeyboardAvoidingView
@@ -313,10 +330,160 @@ function ChatScreen() {
   );
 }
 
+interface LoginScreenProps {
+  onLogin: (idBanner: string) => Promise<void>;
+}
+
+function LoginScreen({ onLogin }: LoginScreenProps) {
+  const [inputId, setInputId] = useState('');
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const ingresar = async () => {
+    const idBanner = inputId.trim().toUpperCase();
+    if (!ID_BANNER_PATTERN.test(idBanner)) {
+      setError('Ingresa un ID válido: U00 seguido de 5 a 8 dígitos.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await onLogin(idBanner);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.loginSafeArea} edges={['top', 'bottom']}>
+      <StatusBar barStyle="light-content" />
+      <KeyboardAvoidingView
+        style={styles.loginContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.loginCard}>
+          <View style={styles.loginAvatar}>
+            <Text style={styles.loginAvatarText}>A</Text>
+          </View>
+          <Text style={styles.loginTitle}>Asistente UNAB</Text>
+          <Text style={styles.loginSubtitle}>
+            Ingresa tu ID institucional para continuar
+          </Text>
+
+          <TextInput
+            style={[styles.loginInput, error !== '' && styles.loginInputError]}
+            placeholder="Ej. U00123456"
+            placeholderTextColor="#9CA3AF"
+            value={inputId}
+            onChangeText={(value) => {
+              setInputId(value.toUpperCase());
+              if (error) setError('');
+            }}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={11}
+            returnKeyType="done"
+            onSubmitEditing={() => void ingresar()}
+            accessibilityLabel="ID Banner institucional"
+          />
+          {error !== '' && (
+            <Text style={styles.loginErrorText} accessibilityRole="alert">
+              {error}
+            </Text>
+          )}
+
+          <TouchableOpacity
+            style={[
+              styles.loginButton,
+              isSubmitting && styles.loginButtonDisabled,
+            ]}
+            onPress={() => void ingresar()}
+            disabled={isSubmitting}
+            accessibilityRole="button"
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.loginButtonText}>Ingresar</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
 export default function App() {
+  const [idBanner, setIdBanner] = useState<string | null>(null);
+  const [isLoadingSession, setIsLoadingSession] = useState(true);
+  const [sessionError, setSessionError] = useState('');
+
+  const cargarSesion = async () => {
+    setIsLoadingSession(true);
+    try {
+      const savedId = await AsyncStorage.getItem(ID_BANNER_KEY);
+      setIdBanner(savedId?.trim().toUpperCase() || null);
+      setSessionError('');
+    } catch {
+      setSessionError('No fue posible leer la sesión guardada en este dispositivo.');
+    } finally {
+      setIsLoadingSession(false);
+    }
+  };
+
+  useEffect(() => {
+    void cargarSesion();
+  }, []);
+
+  const iniciarSesion = async (id: string) => {
+    try {
+      await AsyncStorage.multiSet([
+        [ID_BANNER_KEY, id],
+        [SESSION_ID_KEY, id],
+      ]);
+      setIdBanner(id);
+    } catch {
+      Alert.alert(
+        'No se pudo iniciar sesión',
+        'No fue posible guardar tu ID en este dispositivo. Intenta de nuevo.',
+      );
+    }
+  };
+
+  const cerrarSesion = async () => {
+    try {
+      await AsyncStorage.multiRemove([ID_BANNER_KEY, SESSION_ID_KEY]);
+      setIdBanner(null);
+    } catch {
+      Alert.alert(
+        'No se pudo cerrar sesión',
+        'No fue posible borrar la sesión guardada. Intenta de nuevo.',
+      );
+    }
+  };
+
   return (
     <SafeAreaProvider>
-      <ChatScreen />
+      {isLoadingSession ? (
+        <SafeAreaView style={styles.sessionLoading}>
+          <ActivityIndicator size="large" color="#EA580C" />
+        </SafeAreaView>
+      ) : sessionError ? (
+        <SafeAreaView style={styles.sessionError}>
+          <Text style={styles.sessionErrorText}>{sessionError}</Text>
+          <TouchableOpacity
+            style={styles.loginButton}
+            onPress={() => void cargarSesion()}
+            accessibilityRole="button"
+          >
+            <Text style={styles.loginButtonText}>Reintentar</Text>
+          </TouchableOpacity>
+        </SafeAreaView>
+      ) : idBanner ? (
+        <ChatScreen idBanner={idBanner} onLogout={() => void cerrarSesion()} />
+      ) : (
+        <LoginScreen onLogin={iniciarSesion} />
+      )}
     </SafeAreaProvider>
   );
 }
@@ -377,6 +544,15 @@ const styles = StyleSheet.create({
     color: '#FFEDD5',
     fontSize: 12,
   },
+  activeId: {
+    color: '#FED7AA',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  headerActions: {
+    alignItems: 'flex-end',
+    gap: 5,
+  },
   resetButton: {
     backgroundColor: 'rgba(255,255,255,0.2)',
     paddingHorizontal: 12,
@@ -392,6 +568,121 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
+  },
+  logoutButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  logoutButtonText: {
+    color: '#FFEDD5',
+    fontSize: 11,
+    textDecorationLine: 'underline',
+  },
+  loginSafeArea: {
+    flex: 1,
+    backgroundColor: '#C2410C',
+  },
+  loginContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#F8FAFC',
+  },
+  loginCard: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 24,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  loginAvatar: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: '#C2410C',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  loginAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 26,
+    fontWeight: '800',
+  },
+  loginTitle: {
+    color: '#111827',
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  loginSubtitle: {
+    color: '#6B7280',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 6,
+    marginBottom: 24,
+  },
+  loginInput: {
+    width: '100%',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    color: '#111827',
+    fontSize: 16,
+    letterSpacing: 0.5,
+  },
+  loginInputError: {
+    borderColor: '#DC2626',
+  },
+  loginErrorText: {
+    alignSelf: 'flex-start',
+    color: '#B91C1C',
+    fontSize: 12,
+    marginTop: 6,
+  },
+  loginButton: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EA580C',
+    borderRadius: 12,
+    paddingVertical: 14,
+    marginTop: 18,
+  },
+  loginButtonDisabled: {
+    opacity: 0.65,
+  },
+  loginButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  sessionLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+  },
+  sessionError: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: '#F8FAFC',
+  },
+  sessionErrorText: {
+    color: '#991B1B',
+    textAlign: 'center',
+    fontSize: 15,
+    marginBottom: 4,
   },
   listContent: {
     paddingHorizontal: 12,
